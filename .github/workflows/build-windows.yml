@@ -1,0 +1,78 @@
+name: Build nginx (Windows)
+
+on:
+  workflow_dispatch:            # 手动触发
+  push:
+    branches: [build-nginx]
+    paths: ['.github/workflows/build-windows.yml']   # 只有本文件变动才自动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest     # GitHub 提供的 Windows 虚拟机, 预装 VS2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC environment
+        # 相当于运行 vcvarsall.bat, 让后续步骤能用 cl.exe / nmake
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Strawberry Perl
+        # OpenSSL 的配置脚本是 Perl 写的, 编 OpenSSL 必须有 perl
+        shell: pwsh
+        run: choco install strawberryperl -y --no-progress
+
+      - name: Download pcre2 / zlib / openssl sources
+        # Windows 版 nginx 不用系统库, 要把三个依赖的源码解到 objs/lib 一起编
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force objs/lib | Out-Null
+          curl.exe -sSL -o objs/lib/pcre2.tar.gz  https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.gz
+          curl.exe -sSL -o objs/lib/zlib.tar.gz   https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+          curl.exe -sSL -o objs/lib/openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-3.0.22/openssl-3.0.22.tar.gz
+          tar -xzf objs/lib/pcre2.tar.gz   -C objs/lib
+          tar -xzf objs/lib/zlib.tar.gz    -C objs/lib
+          tar -xzf objs/lib/openssl.tar.gz -C objs/lib
+
+      - name: Configure
+        # 按官方文档 https://nginx.org/en/docs/howto_build_on_win32.html
+        shell: bash
+        run: |
+          export PATH="/c/Strawberry/perl/bin:$PATH"
+          auto/configure \
+            --with-cc=cl \
+            --with-debug \
+            --prefix= \
+            --conf-path=conf/nginx.conf \
+            --pid-path=logs/nginx.pid \
+            --http-log-path=logs/access.log \
+            --error-log-path=logs/error.log \
+            --sbin-path=nginx.exe \
+            --http-client-body-temp-path=temp/client_body_temp \
+            --http-proxy-temp-path=temp/proxy_temp \
+            --http-fastcgi-temp-path=temp/fastcgi_temp \
+            --http-scgi-temp-path=temp/scgi_temp \
+            --http-uwsgi-temp-path=temp/uwsgi_temp \
+            --with-cc-opt=-DFD_SETSIZE=1024 \
+            --with-pcre=objs/lib/pcre2-10.49 \
+            --with-zlib=objs/lib/zlib-1.3.1 \
+            --with-openssl=objs/lib/openssl-3.0.22 \
+            --with-openssl-opt=no-asm \
+            --with-http_ssl_module
+
+      - name: Build (nmake)
+        shell: cmd
+        run: |
+          set PATH=C:\Strawberry\perl\bin;%PATH%
+          nmake
+
+      - name: Show version
+        shell: cmd
+        run: objs\nginx.exe -V
+
+      - name: Upload binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-windows-${{ github.sha }}
+          path: objs/nginx.exe
