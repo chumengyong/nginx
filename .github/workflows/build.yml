@@ -19,7 +19,9 @@ jobs:
           sudo apt-get install -y gcc make libpcre2-dev zlib1g-dev libssl-dev
 
       - name: Configure
-        run: ./configure --with-http_ssl_module   # 生成 Makefile
+        # 注意: git 仓库里没有根目录的 configure(那是发布 tar 包才生成的),
+        # 从源码仓库构建要用 auto/configure
+        run: sh auto/configure --with-http_ssl_module
 
       - name: Build
         run: make -j"$(nproc)"                    # 多核并行编译
